@@ -8,10 +8,10 @@ import urllib.parse
 # Helper: Validate SMILES
 def validate_smiles(smiles):
     """
-    Validate SMILES string using RDKit.
+    Basic validation for SMILES string.
     """
-    mol = Chem.MolFromSmiles(smiles)
-    return mol is not None
+    return bool(smiles.strip())
+
 
 # Helper: Fetch PubChem CID
 def get_cid_from_smiles(smiles):
