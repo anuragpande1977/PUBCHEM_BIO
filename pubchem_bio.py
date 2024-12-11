@@ -2,15 +2,9 @@ import requests
 import pandas as pd
 import streamlit as st
 from io import BytesIO
-from rdkit import Chem
 
-# Helper: Validate SMILES
-def validate_smiles(smiles):
-    mol = Chem.MolFromSmiles(smiles)
-    return mol is not None
-
-# Helper: Fetch CID from PubChem
-def get_cid_from_structure(smiles):
+# Helper: Convert SMILES to PubChem CID
+def get_cid_from_smiles(smiles):
     url = "https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/smiles/cids/JSON"
     params = {'smiles': smiles}
     response = requests.get(url, params=params)
@@ -25,42 +19,64 @@ def get_cid_from_structure(smiles):
         st.error(f"Error fetching CID. Status code: {response.status_code}")
         return None
 
-# Helper: Fetch bioassay data
+# Helper: Retrieve BioAssay Data
 def get_bioassay_data(cid):
     url = f"https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/{cid}/assaysummary/JSON"
     response = requests.get(url)
     if response.status_code == 200:
         data = response.json()
         if 'AssaySummary' in data:
-            return data['AssaySummary']
+            return data['AssaySummary']['Assay']
     return None
 
-# Helper: Fetch predictions from PASS Online
-def fetch_pass_predictions(smiles):
-    url = "http://www.pharmaexpert.ru/passonline/api"
-    payload = {"smiles": smiles}
-    try:
-        response = requests.post(url, json=payload, timeout=10)  # Add timeout
-        response.raise_for_status()  # Raise an error for HTTP codes 4xx/5xx
-        
-        # Attempt to parse JSON
-        try:
-            return response.json()
-        except requests.exceptions.JSONDecodeError:
-            st.error("Error: The API response is not in JSON format.")
-            st.write("Response content:", response.text)  # Debugging
-            return None
-    except requests.exceptions.RequestException as e:
-        st.error(f"API request failed: {e}")
-        return None
+# Helper: Fetch related PubMed articles
+def fetch_pubmed_articles(query, max_results=10):
+    base_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
+    params = {
+        "db": "pubmed",
+        "term": query,
+        "retmode": "json",
+        "retmax": max_results,
+    }
+    response = requests.get(base_url, params=params)
+    if response.status_code == 200:
+        data = response.json()
+        if 'esearchresult' in data and 'idlist' in data['esearchresult']:
+            return data['esearchresult']['idlist']
+    return []
+
+# Helper: Retrieve PubMed article details
+def fetch_pubmed_details(article_ids):
+    if not article_ids:
+        return []
+    base_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi"
+    params = {
+        "db": "pubmed",
+        "id": ",".join(article_ids),
+        "retmode": "json",
+    }
+    response = requests.get(base_url, params=params)
+    if response.status_code == 200:
+        data = response.json()
+        if 'result' in data:
+            results = data['result']
+            return [
+                {
+                    "Title": results[article_id]["title"],
+                    "Journal": results[article_id]["source"],
+                    "Year": results[article_id]["pubdate"],
+                }
+                for article_id in article_ids if article_id in results
+            ]
+    return []
 
 # Helper: Save results to Excel
 def save_to_excel(data, filename="results.xlsx"):
     output = BytesIO()
     try:
         df = pd.DataFrame(data)
-        df.to_excel(output, index=False, engine='openpyxl')  # Save to Excel buffer
-        output.seek(0)  # Reset pointer to the beginning of the stream
+        df.to_excel(output, index=False, engine='openpyxl')
+        output.seek(0)
         return output
     except Exception as e:
         st.error(f"Error saving to Excel: {e}")
@@ -68,75 +84,76 @@ def save_to_excel(data, filename="results.xlsx"):
 
 # Streamlit main app
 def main():
-    st.title("Chemical Analysis: PubChem BioAssay and PASS Predictions")
-    st.write("Analyze compounds using PubChem and PASS Online for bioassay activities and predicted biological activity.")
-
-    # Initialize session state
-    if "cid" not in st.session_state:
-        st.session_state.cid = None
-    if "bioassay_data" not in st.session_state:
-        st.session_state.bioassay_data = None
-    if "pass_results" not in st.session_state:
-        st.session_state.pass_results = None
+    st.title("Compound BioActivity Finder")
+    st.write("Retrieve bioactivity data, targets, and related publications from NCBI.")
 
     # Input: SMILES string
     smiles = st.text_input("Enter the SMILES string of your compound:")
 
     if st.button("Analyze Compound"):
         if smiles:
-            # Validate SMILES
-            if not validate_smiles(smiles):
-                st.error("Invalid SMILES string. Please enter a valid structure.")
-                return
-            
-            # Fetch CID
+            # Step 1: Fetch CID
             with st.spinner("Fetching PubChem CID..."):
-                st.session_state.cid = get_cid_from_structure(smiles)
+                cid = get_cid_from_smiles(smiles)
 
-            if st.session_state.cid:
-                st.success(f"CID retrieved: {st.session_state.cid}")
+            if cid:
+                st.success(f"CID retrieved: {cid}")
 
-                # Fetch BioAssay Data
+                # Step 2: Fetch BioAssay Data
                 with st.spinner("Fetching BioAssay data..."):
-                    st.session_state.bioassay_data = get_bioassay_data(st.session_state.cid)
+                    bioassay_data = get_bioassay_data(cid)
 
-                # Fetch PASS Predictions
-                with st.spinner("Fetching PASS Online predictions..."):
-                    st.session_state.pass_results = fetch_pass_predictions(smiles)
+                # Step 3: Fetch Related Publications
+                if bioassay_data:
+                    st.subheader("BioAssay Data")
+                    important_data = []
+                    for assay in bioassay_data:
+                        important_data.append({
+                            "Assay ID": assay["AID"],
+                            "Activity": assay.get("Outcome", "N/A"),
+                            "Description": assay.get("Description", "N/A"),
+                            "Target": assay.get("TargetName", "N/A")
+                        })
+                    st.dataframe(important_data)
 
-                st.success("Analysis complete!")
+                    # Save to Excel
+                    excel_file = save_to_excel(important_data, "bioassay_data.xlsx")
+                    if excel_file:
+                        st.download_button(
+                            label="Download BioAssay Data as Excel",
+                            data=excel_file,
+                            file_name="bioassay_data.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        )
+
+                    # Fetch PubMed articles
+                    st.spinner("Fetching related PubMed articles...")
+                    targets = [assay["TargetName"] for assay in bioassay_data if "TargetName" in assay]
+                    pubmed_articles = []
+                    for target in targets:
+                        articles = fetch_pubmed_articles(target)
+                        pubmed_articles.extend(fetch_pubmed_details(articles))
+                    
+                    st.subheader("Related Publications")
+                    st.dataframe(pubmed_articles)
+
+                    # Save PubMed articles to Excel
+                    pubmed_excel = save_to_excel(pubmed_articles, "pubmed_articles.xlsx")
+                    if pubmed_excel:
+                        st.download_button(
+                            label="Download PubMed Articles as Excel",
+                            data=pubmed_excel,
+                            file_name="pubmed_articles.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        )
+                else:
+                    st.warning("No BioAssay data found for this compound.")
             else:
                 st.error("Failed to retrieve CID. Please check your SMILES input.")
         else:
             st.error("Please enter a valid SMILES string.")
 
-    # Display results
-    if st.session_state.cid:
-        # BioAssay Data
-        st.subheader("PubChem BioAssay Data")
-        if st.session_state.bioassay_data:
-            st.json(st.session_state.bioassay_data)
-        else:
-            st.warning("No BioAssay data found for this compound.")
-
-        # PASS Predictions
-        st.subheader("PASS Online Predictions")
-        if st.session_state.pass_results:
-            pass_data = pd.DataFrame(st.session_state.pass_results)
-            st.dataframe(pass_data)
-
-            # Save PASS Predictions to Excel
-            excel_file = save_to_excel(st.session_state.pass_results, "pass_predictions.xlsx")
-            if excel_file:
-                st.download_button(
-                    label="Download PASS Predictions as Excel",
-                    data=excel_file,
-                    file_name="pass_predictions.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                )
-        else:
-            st.warning("No PASS predictions available for this compound.")
-
 if __name__ == "__main__":
     main()
+
 
