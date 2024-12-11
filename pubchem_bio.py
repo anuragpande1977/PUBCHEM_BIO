@@ -121,6 +121,13 @@ def main():
             if cid:
                 st.success(f"CID retrieved: {cid}")
 
+                # Fetch Canonical SMILES
+                with st.spinner("Fetching canonical SMILES from PubChem..."):
+                    canonical_smiles = fetch_canonical_smiles(cid)
+                    if canonical_smiles:
+                        st.write(f"Canonical SMILES from PubChem: {canonical_smiles}")
+                        smiles = canonical_smiles  # Use canonical SMILES for downstream queries
+
                 # Fetch BioAssay data from PubChem
                 with st.spinner("Fetching bioassay data from PubChem..."):
                     pubchem_bioassay = fetch_pubchem_bioassay(cid)
@@ -137,6 +144,8 @@ def main():
                                 file_name="pubchem_bioassay.xlsx",
                                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                             )
+                    else:
+                        st.warning("No bioassay data found in PubChem for this compound.")
 
                 # Fetch protein targets from ChEMBL
                 with st.spinner("Fetching targets from ChEMBL..."):
@@ -155,12 +164,11 @@ def main():
                                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                             )
                     else:
-                        st.warning("No targets found in ChEMBL.")
+                        st.warning("No targets found in ChEMBL for this compound.")
+                        st.write("You can manually verify the compound on ChEMBL:", "https://www.ebi.ac.uk/chembl/")
             else:
                 st.error("Failed to retrieve CID. Please check your SMILES input.")
         else:
             st.error("Please enter a valid SMILES string.")
 
-if __name__ == "__main__":
-    main()
 
