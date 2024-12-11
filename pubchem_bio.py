@@ -4,13 +4,11 @@ import streamlit as st
 
 def get_cid_from_structure(smiles):
     """
-    Convert a SMILES string to a PubChem CID with debug statements.
+    Convert a SMILES string to a PubChem CID.
     """
     url = "https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/smiles/cids/JSON"
     params = {'smiles': smiles}
     response = requests.get(url, params=params)
-    
-    st.write(f"SMILES to CID API Response: {response.status_code}, {response.json()}")  # Debug
     
     if response.status_code == 200:
         data = response.json()
@@ -23,27 +21,6 @@ def get_cid_from_structure(smiles):
         st.error(f"Error fetching CID. Status code: {response.status_code}")
         return None
 
-def get_similar_cids(cid, threshold):
-    """
-    Retrieve CIDs for compounds similar to the given CID with debug statements.
-    """
-    url = f"https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/{cid}/similarity/cids/JSON"
-    params = {'Threshold': threshold}
-    response = requests.get(url, params=params)
-    
-    st.write(f"Similarity API Response for CID {cid}: {response.status_code}, {response.json()}")  # Debug
-    
-    if response.status_code == 200:
-        data = response.json()
-        if 'IdentifierList' in data and 'CID' in data['IdentifierList']:
-            return data['IdentifierList']['CID']
-        else:
-            st.warning("No similar compounds found for the given CID.")
-            return []
-    else:
-        st.error(f"Error fetching similar compounds. Status code: {response.status_code}")
-        return []
-
 def get_bioassay_data(cid):
     """
     Retrieve bioassay data for a given PubChem CID, handling multiple response formats.
@@ -51,42 +28,44 @@ def get_bioassay_data(cid):
     url = f"https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/{cid}/assaysummary/JSON"
     response = requests.get(url)
     
-    st.write(f"BioAssay API Response for CID {cid}: {response.status_code}, {response.json()}")  # Debug
-    
     if response.status_code == 200:
         data = response.json()
-        
-        # Check for AssaySummary
         if 'AssaySummary' in data:
             return {'type': 'AssaySummary', 'data': data['AssaySummary']}
-        
-        # Check for Table format
         if 'Table' in data:
             table = data['Table']
             columns = table.get('Columns', {}).get('Column', [])
             rows = table.get('Row', [])
-            parsed_rows = []
-            
-            for row in rows:
-                row_data = dict(zip(columns, row.get('Cell', [])))
-                parsed_rows.append(row_data)
-            
+            parsed_rows = [dict(zip(columns, row.get('Cell', []))) for row in rows]
             return {'type': 'Table', 'data': parsed_rows}
-        
-        st.warning(f"Unknown format in the response for CID {cid}.")
         return None
     else:
-        st.error(f"Error fetching bioassay data. Status code: {response.status_code}")
         return None
+
+def get_similar_cids(cid, threshold):
+    """
+    Retrieve CIDs for compounds similar to the given CID.
+    """
+    url = f"https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/{cid}/similarity/cids/JSON"
+    params = {'Threshold': threshold}
+    response = requests.get(url, params=params)
+    
+    if response.status_code == 200:
+        data = response.json()
+        if 'IdentifierList' in data and 'CID' in data['IdentifierList']:
+            return data['IdentifierList']['CID']
+        return []
+    else:
+        st.error(f"Error fetching similar compounds. Status code: {response.status_code}")
+        return []
 
 def save_to_excel(results, filename="bioassay_results.xlsx"):
     """
-    Save bioassay results to an Excel file with debug statements.
+    Save bioassay results to an Excel file.
     """
     try:
         df = pd.DataFrame(results)
         df.to_excel(filename, index=False)
-        st.write(f"Results saved to {filename}")  # Debug
         return filename
     except Exception as e:
         st.error(f"Error saving to Excel: {e}")
@@ -94,89 +73,66 @@ def save_to_excel(results, filename="bioassay_results.xlsx"):
 
 def main():
     """
-    Streamlit app for PubChem BioAssay Finder with debugging enabled.
+    Streamlit app for PubChem BioAssay Finder with fallback to similarity search.
     """
-    st.title("PubChem BioAssay Finder with Debugging")
+    st.title("PubChem BioAssay Finder")
     st.write("Find potential biological targets for your compound using PubChem's BioAssay database.")
-
-    smiles = st.text_input("Enter the SMILES string of your compound:")
-    threshold = st.slider("Set Similarity Threshold (0-100):", min_value=0, max_value=100, value=80)
     
-    if st.button("Search"):
+    smiles = st.text_input("Enter the SMILES string of your compound:")
+    
+    if st.button("Search for Exact BioAssay Data"):
         if smiles:
             with st.spinner("Fetching CID from PubChem..."):
                 cid = get_cid_from_structure(smiles)
             
             if cid:
                 st.success(f"CID retrieved: {cid}")
+                results = []
+                activity_count = 0
                 
-                # Step 1: Fetch BioAssay data for exact CID
+                # Fetch BioAssay data for the exact compound
                 with st.spinner("Fetching BioAssay data for exact CID..."):
                     bioassay_data = get_bioassay_data(cid)
+                    if bioassay_data:
+                        if bioassay_data['type'] == 'AssaySummary':
+                            activity_count = len(bioassay_data['data'].get('Assay', []))
+                            results = bioassay_data['data'].get('Assay', [])
+                        elif bioassay_data['type'] == 'Table':
+                            activity_count = len(bioassay_data['data'])
+                            results = bioassay_data['data']
                 
-                results = []
-                
-                if bioassay_data:
-                    if bioassay_data['type'] == 'AssaySummary':
-                        st.write("### BioAssay Data for Exact CID (AssaySummary):")
-                        for assay in bioassay_data['data'].get('Assay', []):
-                            name = assay.get('Name', 'Unknown')
-                            target = assay.get('Target', {}).get('Description', 'Unknown target')
-                            outcome = assay.get('Outcome', 'Unknown outcome')
-                            st.write(f"- **Assay**: {name}")
-                            st.write(f"  - **Target**: {target}")
-                            st.write(f"  - **Outcome**: {outcome}")
-                            st.write("---")
-                            results.append({"CID": cid, "Assay": name, "Target": target, "Outcome": outcome})
-                    elif bioassay_data['type'] == 'Table':
-                        st.write("### BioAssay Data for Exact CID (Table):")
-                        for row in bioassay_data['data']:
-                            st.write(f"- **Assay Name**: {row.get('Assay Name', 'Unknown')}")
-                            st.write(f"  - **Outcome**: {row.get('Activity Outcome', 'Unknown')}")
-                            st.write(f"  - **Target GeneID**: {row.get('Target GeneID', 'Unknown')}")
-                            st.write("---")
-                            results.append(row)
-                else:
-                    st.warning("No bioassay data found for the exact CID.")
-                
-                # Step 2: Fetch similar CIDs
-                with st.spinner(f"Fetching similar compounds with threshold {threshold}..."):
-                    similar_cids = get_similar_cids(cid, threshold)
-                
-                if similar_cids:
-                    st.write("### BioAssay Data for Similar Compounds:")
-                    for similar_cid in similar_cids[:10]:  # Limit to top 10 similar compounds
-                        bioassay_data = get_bioassay_data(similar_cid)
-                        if bioassay_data:
-                            if bioassay_data['type'] == 'AssaySummary':
-                                for assay in bioassay_data['data'].get('Assay', []):
-                                    name = assay.get('Name', 'Unknown')
-                                    target = assay.get('Target', {}).get('Description', 'Unknown target')
-                                    outcome = assay.get('Outcome', 'Unknown outcome')
-                                    st.write(f"- **Assay**: {name}")
-                                    st.write(f"  - **Target**: {target}")
-                                    st.write(f"  - **Outcome**: {outcome}")
-                                    st.write("---")
-                                    results.append({"CID": similar_cid, "Assay": name, "Target": target, "Outcome": outcome})
-                            elif bioassay_data['type'] == 'Table':
-                                for row in bioassay_data['data']:
-                                    st.write(f"- **Assay Name**: {row.get('Assay Name', 'Unknown')}")
-                                    st.write(f"  - **Outcome**: {row.get('Activity Outcome', 'Unknown')}")
-                                    st.write(f"  - **Target GeneID**: {row.get('Target GeneID', 'Unknown')}")
-                                    st.write("---")
-                                    results.append(row)
-                        else:
-                            st.write(f"No bioassay data found for CID {similar_cid}.")
-                else:
-                    st.warning("No similar compounds found.")
-                
-                # Step 3: Save results to Excel
-                if results:
-                    st.write("### Save Results")
+                if activity_count > 0:
+                    st.write(f"### Exact BioAssay Activities Found: {activity_count}")
                     filename = save_to_excel(results)
                     if filename:
                         with open(filename, "rb") as file:
-                            st.download_button(label="Download Results as Excel", data=file, file_name="bioassay_results.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                            st.download_button(label="Download Exact Results as Excel", data=file, file_name="bioassay_results.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                else:
+                    st.warning("No bioassay data found for the exact CID. Please adjust the similarity threshold to search for similar compounds.")
+                    # Allow user to adjust threshold and search for similar compounds
+                    threshold = st.slider("Set Similarity Threshold (0-100):", min_value=0, max_value=100, value=80)
+                    if st.button("Search for Similar Compounds"):
+                        with st.spinner(f"Fetching similar compounds with threshold {threshold}..."):
+                            similar_cids = get_similar_cids(cid, threshold)
+                            if similar_cids:
+                                results = []
+                                activity_count = 0
+                                for similar_cid in similar_cids[:10]:  # Limit to top 10 similar compounds
+                                    bioassay_data = get_bioassay_data(similar_cid)
+                                    if bioassay_data:
+                                        if bioassay_data['type'] == 'AssaySummary':
+                                            activity_count += len(bioassay_data['data'].get('Assay', []))
+                                            results.extend(bioassay_data['data'].get('Assay', []))
+                                        elif bioassay_data['type'] == 'Table':
+                                            activity_count += len(bioassay_data['data'])
+                                            results.extend(bioassay_data['data'])
+                                st.write(f"### Total BioAssay Activities Found for Similar Compounds: {activity_count}")
+                                filename = save_to_excel(results)
+                                if filename:
+                                    with open(filename, "rb") as file:
+                                        st.download_button(label="Download Similar Results as Excel", data=file, file_name="similar_bioassay_results.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                            else:
+                                st.warning("No similar compounds found.")
             else:
                 st.error("Failed to retrieve CID. Please check your SMILES input.")
         else:
@@ -184,4 +140,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
