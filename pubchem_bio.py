@@ -3,72 +3,37 @@ import pandas as pd
 import streamlit as st
 from io import BytesIO
 
-# Helper: Convert SMILES to PubChem CID
-def get_cid_from_smiles(smiles):
-    url = "https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/smiles/cids/JSON"
-    params = {'smiles': smiles}
-    response = requests.get(url, params=params)
-    if response.status_code == 200:
-        data = response.json()
-        if 'IdentifierList' in data and 'CID' in data['IdentifierList']:
-            return data['IdentifierList']['CID'][0]
-        else:
-            st.warning("No CID found for the given SMILES string.")
-            return None
-    else:
-        st.error(f"Error fetching CID. Status code: {response.status_code}")
-        return None
-
-# Helper: Retrieve BioAssay Data
-def get_bioassay_data(cid):
-    url = f"https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/{cid}/assaysummary/JSON"
+# Helper: Fetch similar compounds from ZINC20
+def fetch_similar_compounds_from_zinc(smiles, threshold=0.8):
+    url = f"https://zinc20.docking.org/substances.txt?structure={smiles}&threshold={threshold}"
     response = requests.get(url)
     if response.status_code == 200:
-        data = response.json()
-        if 'AssaySummary' in data:
-            return data['AssaySummary']['Assay']
-    return None
-
-# Helper: Fetch related PubMed articles
-def fetch_pubmed_articles(query, max_results=10):
-    base_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
-    params = {
-        "db": "pubmed",
-        "term": query,
-        "retmode": "json",
-        "retmax": max_results,
-    }
-    response = requests.get(base_url, params=params)
-    if response.status_code == 200:
-        data = response.json()
-        if 'esearchresult' in data and 'idlist' in data['esearchresult']:
-            return data['esearchresult']['idlist']
-    return []
-
-# Helper: Retrieve PubMed article details
-def fetch_pubmed_details(article_ids):
-    if not article_ids:
+        compounds = response.text.splitlines()
+        return compounds[:10]  # Return top 10 similar compounds
+    else:
+        st.error(f"Error fetching similar compounds from ZINC20. Status code: {response.status_code}")
         return []
-    base_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi"
-    params = {
-        "db": "pubmed",
-        "id": ",".join(article_ids),
-        "retmode": "json",
-    }
-    response = requests.get(base_url, params=params)
+
+# Helper: Fetch compound details from ZINC20
+def fetch_compound_details(zinc_id):
+    url = f"https://zinc20.docking.org/substances/{zinc_id}.json"
+    response = requests.get(url)
     if response.status_code == 200:
-        data = response.json()
-        if 'result' in data:
-            results = data['result']
-            return [
-                {
-                    "Title": results[article_id]["title"],
-                    "Journal": results[article_id]["source"],
-                    "Year": results[article_id]["pubdate"],
-                }
-                for article_id in article_ids if article_id in results
-            ]
-    return []
+        return response.json()
+    else:
+        st.error(f"Error fetching details for ZINC ID {zinc_id}. Status code: {response.status_code}")
+        return None
+
+# Helper: Fetch protein targets from ZINC20
+def fetch_targets_from_zinc(smiles):
+    url = f"https://zinc20.docking.org/proteins.txt?structure={smiles}"
+    response = requests.get(url)
+    if response.status_code == 200:
+        targets = response.text.splitlines()  # List of target protein names
+        return targets
+    else:
+        st.error(f"Error fetching targets from ZINC20. Status code: {response.status_code}")
+        return []
 
 # Helper: Save results to Excel
 def save_to_excel(data, filename="results.xlsx"):
@@ -84,72 +49,49 @@ def save_to_excel(data, filename="results.xlsx"):
 
 # Streamlit main app
 def main():
-    st.title("Compound BioActivity Finder")
-    st.write("Retrieve bioactivity data, targets, and related publications from NCBI.")
+    st.title("ZINC20 Compound Similarity and Target Finder")
+    st.write("Retrieve similar compounds, targets, and activity data using ZINC20.")
 
     # Input: SMILES string
     smiles = st.text_input("Enter the SMILES string of your compound:")
 
     if st.button("Analyze Compound"):
         if smiles:
-            # Step 1: Fetch CID
-            with st.spinner("Fetching PubChem CID..."):
-                cid = get_cid_from_smiles(smiles)
+            # Fetch similar compounds
+            with st.spinner("Fetching similar compounds from ZINC20..."):
+                similar_compounds = fetch_similar_compounds_from_zinc(smiles)
 
-            if cid:
-                st.success(f"CID retrieved: {cid}")
+            # Display similar compounds
+            if similar_compounds:
+                st.subheader("Similar Compounds")
+                st.write(similar_compounds)
 
-                # Step 2: Fetch BioAssay Data
-                with st.spinner("Fetching BioAssay data..."):
-                    bioassay_data = get_bioassay_data(cid)
+                # Fetch and display compound details
+                compound_details = []
+                for zinc_id in similar_compounds:
+                    details = fetch_compound_details(zinc_id)
+                    if details:
+                        compound_details.append(details)
+                if compound_details:
+                    st.subheader("Compound Details")
+                    st.dataframe(compound_details)
 
-                # Step 3: Fetch Related Publications
-                if bioassay_data:
-                    st.subheader("BioAssay Data")
-                    important_data = []
-                    for assay in bioassay_data:
-                        important_data.append({
-                            "Assay ID": assay["AID"],
-                            "Activity": assay.get("Outcome", "N/A"),
-                            "Description": assay.get("Description", "N/A"),
-                            "Target": assay.get("TargetName", "N/A")
-                        })
-                    st.dataframe(important_data)
-
-                    # Save to Excel
-                    excel_file = save_to_excel(important_data, "bioassay_data.xlsx")
+                    # Save compound details to Excel
+                    excel_file = save_to_excel(compound_details, "compound_details.xlsx")
                     if excel_file:
                         st.download_button(
-                            label="Download BioAssay Data as Excel",
+                            label="Download Compound Details as Excel",
                             data=excel_file,
-                            file_name="bioassay_data.xlsx",
+                            file_name="compound_details.xlsx",
                             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         )
 
-                    # Fetch PubMed articles
-                    st.spinner("Fetching related PubMed articles...")
-                    targets = [assay["TargetName"] for assay in bioassay_data if "TargetName" in assay]
-                    pubmed_articles = []
-                    for target in targets:
-                        articles = fetch_pubmed_articles(target)
-                        pubmed_articles.extend(fetch_pubmed_details(articles))
-                    
-                    st.subheader("Related Publications")
-                    st.dataframe(pubmed_articles)
-
-                    # Save PubMed articles to Excel
-                    pubmed_excel = save_to_excel(pubmed_articles, "pubmed_articles.xlsx")
-                    if pubmed_excel:
-                        st.download_button(
-                            label="Download PubMed Articles as Excel",
-                            data=pubmed_excel,
-                            file_name="pubmed_articles.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        )
-                else:
-                    st.warning("No BioAssay data found for this compound.")
-            else:
-                st.error("Failed to retrieve CID. Please check your SMILES input.")
+            # Fetch protein targets
+            with st.spinner("Fetching protein targets from ZINC20..."):
+                targets = fetch_targets_from_zinc(smiles)
+                if targets:
+                    st.subheader("Protein Targets")
+                    st.write(targets)
         else:
             st.error("Please enter a valid SMILES string.")
 
