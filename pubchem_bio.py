@@ -73,70 +73,82 @@ def save_to_excel(results, filename="bioassay_results.xlsx"):
 
 def main():
     """
-    Streamlit app for PubChem BioAssay Finder with fallback to similarity search.
+    Streamlit app for PubChem BioAssay Finder with session state management.
     """
     st.title("PubChem BioAssay Finder")
     st.write("Find potential biological targets for your compound using PubChem's BioAssay database.")
     
+    # Initialize session state
+    if "exact_results" not in st.session_state:
+        st.session_state.exact_results = None
+    if "exact_found" not in st.session_state:
+        st.session_state.exact_found = False
+    if "cid" not in st.session_state:
+        st.session_state.cid = None
+    if "similar_results" not in st.session_state:
+        st.session_state.similar_results = None
+    
+    # Input SMILES
     smiles = st.text_input("Enter the SMILES string of your compound:")
     
+    # Exact search button
     if st.button("Search for Exact BioAssay Data"):
         if smiles:
             with st.spinner("Fetching CID from PubChem..."):
-                cid = get_cid_from_structure(smiles)
+                st.session_state.cid = get_cid_from_structure(smiles)
             
-            if cid:
-                st.success(f"CID retrieved: {cid}")
-                results = []
-                activity_count = 0
-                
-                # Fetch BioAssay data for the exact compound
+            if st.session_state.cid:
+                st.success(f"CID retrieved: {st.session_state.cid}")
                 with st.spinner("Fetching BioAssay data for exact CID..."):
-                    bioassay_data = get_bioassay_data(cid)
+                    bioassay_data = get_bioassay_data(st.session_state.cid)
+                    
                     if bioassay_data:
+                        st.session_state.exact_found = True
                         if bioassay_data['type'] == 'AssaySummary':
-                            activity_count = len(bioassay_data['data'].get('Assay', []))
-                            results = bioassay_data['data'].get('Assay', [])
+                            st.session_state.exact_results = bioassay_data['data'].get('Assay', [])
                         elif bioassay_data['type'] == 'Table':
-                            activity_count = len(bioassay_data['data'])
-                            results = bioassay_data['data']
-                
-                if activity_count > 0:
-                    st.write(f"### Exact BioAssay Activities Found: {activity_count}")
-                    filename = save_to_excel(results)
-                    if filename:
-                        with open(filename, "rb") as file:
-                            st.download_button(label="Download Exact Results as Excel", data=file, file_name="bioassay_results.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-                else:
-                    st.warning("No bioassay data found for the exact CID. Please adjust the similarity threshold to search for similar compounds.")
-                    # Allow user to adjust threshold and search for similar compounds
-                    threshold = st.slider("Set Similarity Threshold (0-100):", min_value=0, max_value=100, value=80)
-                    if st.button("Search for Similar Compounds"):
-                        with st.spinner(f"Fetching similar compounds with threshold {threshold}..."):
-                            similar_cids = get_similar_cids(cid, threshold)
-                            if similar_cids:
-                                results = []
-                                activity_count = 0
-                                for similar_cid in similar_cids[:10]:  # Limit to top 10 similar compounds
-                                    bioassay_data = get_bioassay_data(similar_cid)
-                                    if bioassay_data:
-                                        if bioassay_data['type'] == 'AssaySummary':
-                                            activity_count += len(bioassay_data['data'].get('Assay', []))
-                                            results.extend(bioassay_data['data'].get('Assay', []))
-                                        elif bioassay_data['type'] == 'Table':
-                                            activity_count += len(bioassay_data['data'])
-                                            results.extend(bioassay_data['data'])
-                                st.write(f"### Total BioAssay Activities Found for Similar Compounds: {activity_count}")
-                                filename = save_to_excel(results)
-                                if filename:
-                                    with open(filename, "rb") as file:
-                                        st.download_button(label="Download Similar Results as Excel", data=file, file_name="similar_bioassay_results.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-                            else:
-                                st.warning("No similar compounds found.")
+                            st.session_state.exact_results = bioassay_data['data']
+                    else:
+                        st.session_state.exact_found = False
+                        st.warning("No bioassay data found for the exact CID.")
             else:
                 st.error("Failed to retrieve CID. Please check your SMILES input.")
         else:
             st.error("Please enter a valid SMILES string.")
+    
+    # Show exact results if found
+    if st.session_state.exact_found:
+        activity_count = len(st.session_state.exact_results)
+        st.write(f"### Exact BioAssay Activities Found: {activity_count}")
+        filename = save_to_excel(st.session_state.exact_results, "exact_bioassay_results.xlsx")
+        if filename:
+            with open(filename, "rb") as file:
+                st.download_button(label="Download Exact Results as Excel", data=file, file_name=filename, mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    else:
+        # Similarity threshold search
+        threshold = st.slider("Set Similarity Threshold (0-100):", min_value=0, max_value=100, value=80, key="threshold")
+        if st.button("Search for Similar Compounds"):
+            if st.session_state.cid:
+                with st.spinner(f"Fetching similar compounds with threshold {threshold}..."):
+                    similar_cids = get_similar_cids(st.session_state.cid, threshold)
+                    if similar_cids:
+                        st.session_state.similar_results = []
+                        for similar_cid in similar_cids[:10]:  # Limit to top 10 similar compounds
+                            bioassay_data = get_bioassay_data(similar_cid)
+                            if bioassay_data:
+                                if bioassay_data['type'] == 'AssaySummary':
+                                    st.session_state.similar_results.extend(bioassay_data['data'].get('Assay', []))
+                                elif bioassay_data['type'] == 'Table':
+                                    st.session_state.similar_results.extend(bioassay_data['data'])
+                        st.write(f"### Total BioAssay Activities Found for Similar Compounds: {len(st.session_state.similar_results)}")
+                        filename = save_to_excel(st.session_state.similar_results, "similar_bioassay_results.xlsx")
+                        if filename:
+                            with open(filename, "rb") as file:
+                                st.download_button(label="Download Similar Results as Excel", data=file, file_name=filename, mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                    else:
+                        st.warning("No similar compounds found.")
+            else:
+                st.warning("No CID available. Perform an exact search first.")
 
 if __name__ == "__main__":
     main()
