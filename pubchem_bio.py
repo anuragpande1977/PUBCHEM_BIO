@@ -109,10 +109,11 @@ def main():
 
     if st.button("Analyze Compound"):
         if smiles:
-            # Validate SMILES
-            if not validate_smiles(smiles):
-                st.error("Invalid SMILES string. Please provide a valid structure.")
-                return
+    # Simplified validation
+    if not validate_smiles(smiles):
+        st.error("Invalid SMILES string. Please provide a valid structure.")
+        return
+
 
             # Fetch CID from PubChem
             with st.spinner("Fetching PubChem CID..."):
