@@ -1,5 +1,5 @@
-streamlit==1.25.0  # Replace with your current version if needed
-pandas==1.5.3      # Ensure compatibility with Streamlit
-matplotlib==3.7.2  # For plotting
-requests==2.31.0   # For API calls
-networkx==3.1      # For gene-protein interaction visualization
+streamlit==1.25.0
+pandas==1.5.3
+openpyxl==3.1.2
+requests==2.31.0
+rdkit==2023.9.1
