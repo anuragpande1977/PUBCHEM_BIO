@@ -1,4 +1,5 @@
 import requests
+import pandas as pd
 import streamlit as st
 
 def get_cid_from_structure(smiles):
@@ -18,12 +19,12 @@ def get_cid_from_structure(smiles):
     else:
         return None
 
-def get_similar_cids(cid):
+def get_similar_cids(cid, threshold):
     """
     Retrieve CIDs for compounds similar to the given CID.
     """
     url = f"https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/{cid}/similarity/cids/JSON"
-    params = {'Threshold': 90}  # Adjust similarity threshold (0-100)
+    params = {'Threshold': threshold}
     response = requests.get(url, params=params)
     
     if response.status_code == 200:
@@ -51,6 +52,14 @@ def get_bioassay_data(cid):
     else:
         return None
 
+def save_to_excel(results, filename="bioassay_results.xlsx"):
+    """
+    Save bioassay results to an Excel file.
+    """
+    df = pd.DataFrame(results)
+    df.to_excel(filename, index=False)
+    return filename
+
 def main():
     """
     Streamlit app for PubChem BioAssay Finder with structural similarity search.
@@ -59,7 +68,8 @@ def main():
     st.write("Find potential biological targets for your compound using PubChem's BioAssay database.")
 
     smiles = st.text_input("Enter the SMILES string of your compound:")
-
+    threshold = st.slider("Set Similarity Threshold (0-100):", min_value=0, max_value=100, value=80)
+    
     if st.button("Search"):
         if smiles:
             with st.spinner("Fetching CID from PubChem..."):
@@ -72,6 +82,8 @@ def main():
                 with st.spinner("Fetching BioAssay data for exact CID..."):
                     bioassay_data = get_bioassay_data(cid)
                 
+                results = []
+                
                 if bioassay_data:
                     st.write("### BioAssay Data for Exact CID:")
                     for assay in bioassay_data.get('Assay', []):
@@ -82,17 +94,17 @@ def main():
                         st.write(f"  - **Target**: {target}")
                         st.write(f"  - **Outcome**: {outcome}")
                         st.write("---")
+                        results.append({"CID": cid, "Assay": name, "Target": target, "Outcome": outcome})
                 else:
                     st.warning("No bioassay data found for the exact CID.")
                 
                 # Step 2: Fetch similar CIDs
-                with st.spinner("Fetching similar compounds..."):
-                    similar_cids = get_similar_cids(cid)
+                with st.spinner(f"Fetching similar compounds with threshold {threshold}..."):
+                    similar_cids = get_similar_cids(cid, threshold)
                 
                 if similar_cids:
                     st.write("### BioAssay Data for Similar Compounds:")
                     for similar_cid in similar_cids[:10]:  # Limit to top 10 similar compounds
-                        st.write(f"Fetching bioassay data for similar CID: {similar_cid}")
                         bioassay_data = get_bioassay_data(similar_cid)
                         if bioassay_data:
                             for assay in bioassay_data.get('Assay', []):
@@ -103,10 +115,18 @@ def main():
                                 st.write(f"  - **Target**: {target}")
                                 st.write(f"  - **Outcome**: {outcome}")
                                 st.write("---")
+                                results.append({"CID": similar_cid, "Assay": name, "Target": target, "Outcome": outcome})
                         else:
                             st.write(f"No bioassay data found for CID {similar_cid}.")
                 else:
                     st.warning("No similar compounds found.")
+                
+                # Step 3: Save results to Excel
+                if results:
+                    st.write("### Save Results")
+                    filename = save_to_excel(results)
+                    with open(filename, "rb") as file:
+                        st.download_button(label="Download Results as Excel", data=file, file_name="bioassay_results.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
             else:
                 st.error("Failed to retrieve CID. Please check your SMILES input.")
         else:
@@ -114,4 +134,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
