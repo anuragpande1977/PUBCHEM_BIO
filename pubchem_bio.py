@@ -50,6 +50,8 @@ def get_similar_cids(cid, threshold):
     params = {'Threshold': threshold}
     response = requests.get(url, params=params)
     
+    st.write(f"Similarity API Response: {response.status_code}, {response.json()}")  # Debugging output
+    
     if response.status_code == 200:
         data = response.json()
         if 'IdentifierList' in data and 'CID' in data['IdentifierList']:
@@ -58,6 +60,7 @@ def get_similar_cids(cid, threshold):
     else:
         st.error(f"Error fetching similar compounds. Status code: {response.status_code}")
         return []
+
 
 def save_to_excel(results, filename="bioassay_results.xlsx"):
     """
