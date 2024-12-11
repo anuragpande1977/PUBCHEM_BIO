@@ -30,6 +30,29 @@ def get_cid_from_smiles(smiles):
         st.error(f"Error fetching CID from PubChem. Status code: {response.status_code}")
         return None
 
+# Helper: Fetch PASS Online Predictions
+def fetch_pass_predictions(smiles):
+    """
+    Fetch predicted activities (PI and PA) using PASS Online.
+    """
+    url = "https://www.way2drug.com/PASSOnline/predict"
+    params = {"smiles": smiles}
+    response = requests.post(url, data=params)
+    if response.status_code == 200:
+        try:
+            data = response.json()
+            predictions = [
+                {"Activity": activity, "PA": pred["PA"], "PI": pred["PI"]}
+                for activity, pred in data["results"].items()
+            ]
+            return predictions
+        except KeyError:
+            st.warning("Unable to parse PASS Online predictions.")
+            return []
+    else:
+        st.error(f"Error fetching predictions from PASS Online. Status code: {response.status_code}")
+        return []
+
 # Helper: Fetch PubChem Compound Summary
 def fetch_pubchem_summary(cid):
     """
@@ -48,13 +71,13 @@ def fetch_pubchem_summary(cid):
         st.error(f"Error fetching compound summary from PubChem. Status code: {response.status_code}")
         return None
 
-# Helper: Fetch PubChem Similar Compounds
-def fetch_similar_compounds(cid, threshold=90):
+# Helper: Fetch PubChem Similar Compounds (Using SMILES)
+def fetch_similar_compounds_by_smiles(smiles, threshold=80):
     """
-    Retrieve similar compounds for a given PubChem CID.
+    Retrieve similar compounds for a given SMILES string using PubChem.
     """
-    url = f"https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/{cid}/similarity/cids/JSON"
-    params = {"Threshold": threshold}
+    url = "https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/similarity/cids/JSON"
+    params = {"smiles": smiles, "Threshold": threshold}
     response = requests.get(url, params=params)
     if response.status_code == 200:
         try:
@@ -64,7 +87,7 @@ def fetch_similar_compounds(cid, threshold=90):
             st.warning("No similar compounds found.")
             return []
     else:
-        st.error(f"Error fetching similar compounds. Status code: {response.status_code}")
+        st.error(f"Error fetching similar compounds by SMILES. Status code: {response.status_code}")
         return []
 
 # Helper: Save results to Excel
@@ -84,8 +107,8 @@ def save_to_excel(data, filename="results.xlsx"):
 
 # Main Streamlit App
 def main():
-    st.title("Comprehensive Compound Analysis")
-    st.write("Analyze compounds using PubChem for bioactivity and target data.")
+    st.title("Comprehensive Compound Analysis with PI and PA Predictions")
+    st.write("Analyze compounds using PubChem, PASS Online, and more.")
 
     # Input: SMILES string
     smiles = st.text_input("Enter the SMILES string of your compound:")
@@ -111,12 +134,42 @@ def main():
                         st.subheader("PubChem Compound Summary")
                         st.json(compound_summary)
 
+                # Fetch PASS Online predictions
+                with st.spinner("Fetching activity predictions from PASS Online..."):
+                    pass_predictions = fetch_pass_predictions(smiles)
+                    if pass_predictions:
+                        st.subheader("Predicted Activities (PASS Online)")
+                        st.dataframe(pass_predictions)
+
+                        # Save predictions to Excel
+                        excel_file = save_to_excel(pass_predictions, "pass_predictions.xlsx")
+                        if excel_file:
+                            st.download_button(
+                                label="Download PASS Predictions as Excel",
+                                data=excel_file,
+                                file_name="pass_predictions.xlsx",
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            )
+                    else:
+                        st.warning("No predictions available from PASS Online.")
+
                 # Fetch similar compounds from PubChem
-                with st.spinner("Fetching similar compounds from PubChem..."):
-                    similar_compounds = fetch_similar_compounds(cid)
+                with st.spinner("Fetching similar compounds from PubChem using SMILES..."):
+                    similar_compounds = fetch_similar_compounds_by_smiles(smiles)
                     if similar_compounds:
                         st.subheader("Similar Compounds (PubChem)")
                         st.write(similar_compounds)
+
+                        # Save similar compounds to Excel
+                        similar_data = [{"CID": cid} for cid in similar_compounds]
+                        excel_file = save_to_excel(similar_data, "similar_compounds.xlsx")
+                        if excel_file:
+                            st.download_button(
+                                label="Download Similar Compounds as Excel",
+                                data=excel_file,
+                                file_name="similar_compounds.xlsx",
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            )
                     else:
                         st.warning("No similar compounds found.")
             else:
@@ -126,4 +179,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
