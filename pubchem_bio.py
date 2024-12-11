@@ -1,9 +1,19 @@
 import requests
 import pandas as pd
 import streamlit as st
+from rdkit import Chem
 from io import BytesIO
+import urllib.parse
 
-# Helper: Convert SMILES to PubChem CID
+# Helper: Validate SMILES
+def validate_smiles(smiles):
+    """
+    Validate SMILES string using RDKit.
+    """
+    mol = Chem.MolFromSmiles(smiles)
+    return mol is not None
+
+# Helper: Fetch PubChem CID
 def get_cid_from_smiles(smiles):
     """
     Convert a SMILES string to a PubChem CID.
@@ -22,7 +32,7 @@ def get_cid_from_smiles(smiles):
         st.error(f"Error fetching CID from PubChem. Status code: {response.status_code}")
         return None
 
-# Helper: Fetch bioassay data from PubChem
+# Helper: Fetch PubChem BioAssay Data
 def fetch_pubchem_bioassay(cid):
     """
     Retrieve bioassay data for a given PubChem CID.
@@ -46,38 +56,32 @@ def fetch_pubchem_bioassay(cid):
     st.warning("No bioassay data found in PubChem.")
     return []
 
-# Helper: Fetch protein targets from ChEMBL
+# Helper: Fetch ChEMBL Targets
 def fetch_chembl_targets(smiles):
     """
     Fetch targets for a compound from ChEMBL using SMILES.
     """
-    url = f"https://www.ebi.ac.uk/chembl/api/data/molecule?smiles={smiles}"
+    smiles_encoded = urllib.parse.quote(smiles)  # Encode SMILES for URL
+    url = f"https://www.ebi.ac.uk/chembl/api/data/molecule?smiles={smiles_encoded}"
     response = requests.get(url)
     if response.status_code == 200:
-        data = response.json()
-        targets = []
-        for molecule in data.get("molecules", []):
-            for activity in molecule.get("activities", []):
-                if "target_chembl_id" in activity:
-                    targets.append(activity["target_chembl_id"])
-        return targets
+        try:
+            data = response.json()
+            results = [
+                {
+                    "Molecule ChEMBL ID": molecule["molecule_chembl_id"],
+                    "Molecule Name": molecule.get("pref_name", "N/A"),
+                }
+                for molecule in data.get("molecules", [])
+            ]
+            return results
+        except requests.exceptions.JSONDecodeError:
+            st.warning("Received a non-JSON response from ChEMBL.")
+            st.write("Raw Response:", response.text)
+            return []
     else:
         st.error(f"Error fetching targets from ChEMBL. Status code: {response.status_code}")
-        return []
-
-# Helper: Fetch binding data from BindingDB
-def fetch_bindingdb_targets(smiles):
-    """
-    Fetch binding targets for a compound from BindingDB.
-    """
-    url = f"https://www.bindingdb.org/rwd/bind/chemsearch/marvin/SDFDownload.jsp?download_file=yes&smiles={smiles}"
-    response = requests.get(url)
-    if response.status_code == 200:
-        # BindingDB may return SDF or summary data; ensure proper processing
-        data = response.text.splitlines()
-        return data[:10]  # Show first 10 entries for brevity
-    else:
-        st.error(f"Error fetching binding data from BindingDB. Status code: {response.status_code}")
+        st.write("Response content:", response.text)
         return []
 
 # Helper: Save results to Excel
@@ -95,16 +99,22 @@ def save_to_excel(data, filename="results.xlsx"):
         st.error(f"Error saving to Excel: {e}")
         return None
 
-# Main Streamlit app
+# Main Streamlit App
 def main():
     st.title("Compound Bioactivity and Target Finder")
-    st.write("Analyze compounds using PubChem, ChEMBL, and BindingDB for bioactivity data and targets.")
+    st.write("Analyze compounds using PubChem and ChEMBL for bioactivity data and targets.")
 
     # Input: SMILES string
     smiles = st.text_input("Enter the SMILES string of your compound:")
 
     if st.button("Analyze Compound"):
         if smiles:
+            # Validate SMILES
+            if not validate_smiles(smiles):
+                st.error("Invalid SMILES string. Please provide a valid structure.")
+                return
+
+            # Fetch CID from PubChem
             with st.spinner("Fetching PubChem CID..."):
                 cid = get_cid_from_smiles(smiles)
 
@@ -133,14 +143,19 @@ def main():
                     chembl_targets = fetch_chembl_targets(smiles)
                     if chembl_targets:
                         st.subheader("Protein Targets (ChEMBL)")
-                        st.write(chembl_targets)
+                        st.dataframe(chembl_targets)
 
-                # Fetch binding data from BindingDB
-                with st.spinner("Fetching binding data from BindingDB..."):
-                    bindingdb_targets = fetch_bindingdb_targets(smiles)
-                    if bindingdb_targets:
-                        st.subheader("Binding Targets (BindingDB)")
-                        st.write(bindingdb_targets)
+                        # Save ChEMBL target data to Excel
+                        chembl_excel = save_to_excel(chembl_targets, "chembl_targets.xlsx")
+                        if chembl_excel:
+                            st.download_button(
+                                label="Download ChEMBL Targets as Excel",
+                                data=chembl_excel,
+                                file_name="chembl_targets.xlsx",
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            )
+                    else:
+                        st.warning("No targets found in ChEMBL.")
             else:
                 st.error("Failed to retrieve CID. Please check your SMILES input.")
         else:
