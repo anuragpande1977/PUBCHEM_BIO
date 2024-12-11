@@ -2,6 +2,7 @@ import requests
 import pandas as pd
 import streamlit as st
 from io import BytesIO
+import urllib.parse
 
 # Helper: Validate SMILES
 def validate_smiles(smiles):
@@ -29,50 +30,44 @@ def get_cid_from_smiles(smiles):
         st.error(f"Error fetching CID from PubChem. Status code: {response.status_code}")
         return None
 
-# Helper: Fetch PubChem BioAssay Data
-def fetch_pubchem_bioassay(cid):
+# Helper: Fetch ChEMBL Molecule Info
+def fetch_chembl_molecule_info(smiles):
     """
-    Retrieve bioassay data for a given PubChem CID.
+    Fetch molecule information from ChEMBL using SMILES.
     """
-    url = f"https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/{cid}/assaysummary/JSON"
-    response = requests.get(url)
-    if response.status_code == 200:
-        data = response.json()
-        if "AssaySummary" in data:
-            assays = data["AssaySummary"]["Assay"]
-            results = [
-                {
-                    "Assay ID": assay.get("AID"),
-                    "Description": assay.get("Description", "N/A"),
-                    "Outcome": assay.get("Outcome", "N/A"),
-                    "Target Name": assay.get("TargetName", "N/A"),
-                }
-                for assay in assays
-            ]
-            return results
-    st.warning("No bioassay data found in PubChem.")
-    return []
-
-# Helper: Fetch NCBI Target Genes/Proteins
-def fetch_ncbi_gene_protein(cid):
-    """
-    Retrieve associated genes and proteins using NCBI Entrez utilities.
-    """
-    url = f"https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/{cid}/targets/JSON"
+    url = f"https://www.ebi.ac.uk/chembl/api/data/molecule?smiles={urllib.parse.quote(smiles)}"
     response = requests.get(url)
     if response.status_code == 200:
         try:
             data = response.json()
-            results = [
-                {"Gene/Protein": target["TargetName"], "Target Type": target.get("TargetType", "N/A")}
-                for target in data.get("Targets", [])
+            molecules = [
+                {
+                    "ChEMBL ID": molecule["molecule_chembl_id"],
+                    "Name": molecule.get("pref_name", "N/A"),
+                    "Max Phase": molecule.get("max_phase", "N/A"),
+                }
+                for molecule in data.get("molecules", [])
             ]
-            return results
+            return molecules
         except KeyError:
-            st.warning("No gene or protein targets found.")
+            st.warning("No molecule information found in ChEMBL.")
             return []
     else:
-        st.error(f"Error fetching target data from NCBI. Status code: {response.status_code}")
+        st.error(f"Error fetching molecule information from ChEMBL. Status code: {response.status_code}")
+        return []
+
+# Helper: Fetch BindingDB Targets
+def fetch_bindingdb_targets(smiles):
+    """
+    Fetch target binding data from BindingDB using SMILES.
+    """
+    url = f"https://www.bindingdb.org/rwd/bind/chemsearch/marvin/SDFDownload.jsp?download_file=yes&smiles={urllib.parse.quote(smiles)}"
+    response = requests.get(url)
+    if response.status_code == 200 and response.text.strip():
+        data = response.text.splitlines()
+        return [{"Target Data": line} for line in data[:10]]  # Show first 10 entries
+    else:
+        st.warning("No binding data found in BindingDB for this compound.")
         return []
 
 # Helper: Save results to Excel
@@ -92,8 +87,8 @@ def save_to_excel(data, filename="results.xlsx"):
 
 # Main Streamlit App
 def main():
-    st.title("Compound Analysis with Activity Predictions and Targets")
-    st.write("Analyze compounds using PubChem and NCBI for activity and target data.")
+    st.title("Comprehensive Compound Analysis with ChEMBL and BindingDB Integration")
+    st.write("Analyze compounds using PubChem, ChEMBL, and BindingDB.")
 
     # Input: SMILES string
     smiles = st.text_input("Enter the SMILES string of your compound:")
@@ -112,41 +107,44 @@ def main():
             if cid:
                 st.success(f"CID retrieved: {cid}")
 
-                # Fetch PubChem BioAssay Data
-                with st.spinner("Fetching bioassay data from PubChem..."):
-                    bioassay_data = fetch_pubchem_bioassay(cid)
-                    if bioassay_data:
-                        st.subheader("BioAssay Data (PubChem)")
-                        st.dataframe(bioassay_data)
+            # Fetch ChEMBL molecule information
+            with st.spinner("Fetching molecule information from ChEMBL..."):
+                chembl_data = fetch_chembl_molecule_info(smiles)
+                if chembl_data:
+                    st.subheader("ChEMBL Molecule Information")
+                    st.dataframe(chembl_data)
 
-                        # Save to Excel
-                        excel_file = save_to_excel(bioassay_data, "bioassay_data.xlsx")
-                        if excel_file:
-                            st.download_button(
-                                label="Download BioAssay Data as Excel",
-                                data=excel_file,
-                                file_name="bioassay_data.xlsx",
-                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            )
+                    # Save to Excel
+                    excel_file = save_to_excel(chembl_data, "chembl_data.xlsx")
+                    if excel_file:
+                        st.download_button(
+                            label="Download ChEMBL Data as Excel",
+                            data=excel_file,
+                            file_name="chembl_data.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        )
+                else:
+                    st.warning("No data found in ChEMBL.")
 
-                # Fetch NCBI Target Data
-                with st.spinner("Fetching target genes and proteins from NCBI..."):
-                    target_data = fetch_ncbi_gene_protein(cid)
-                    if target_data:
-                        st.subheader("Target Genes/Proteins (NCBI)")
-                        st.dataframe(target_data)
+            # Fetch BindingDB target data
+            with st.spinner("Fetching binding data from BindingDB..."):
+                bindingdb_targets = fetch_bindingdb_targets(smiles)
+                if bindingdb_targets:
+                    st.subheader("Binding Targets (BindingDB)")
+                    st.dataframe(bindingdb_targets)
 
-                        # Save to Excel
-                        excel_file = save_to_excel(target_data, "target_data.xlsx")
-                        if excel_file:
-                            st.download_button(
-                                label="Download Target Data as Excel",
-                                data=excel_file,
-                                file_name="target_data.xlsx",
-                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            )
-            else:
-                st.error("Failed to retrieve CID. Please check your SMILES input.")
+                    # Save to Excel
+                    excel_file = save_to_excel(bindingdb_targets, "bindingdb_targets.xlsx")
+                    if excel_file:
+                        st.download_button(
+                            label="Download BindingDB Targets as Excel",
+                            data=excel_file,
+                            file_name="bindingdb_targets.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        )
+                else:
+                    st.warning("No binding data found in BindingDB.")
+
         else:
             st.error("Please enter a valid SMILES string.")
 
