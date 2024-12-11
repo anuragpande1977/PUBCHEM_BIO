@@ -46,7 +46,7 @@ def get_similar_cids(cid, threshold):
 
 def get_bioassay_data(cid):
     """
-    Retrieve bioassay data for a given PubChem CID with debug statements.
+    Retrieve bioassay data for a given PubChem CID, handling multiple response formats.
     """
     url = f"https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/{cid}/assaysummary/JSON"
     response = requests.get(url)
@@ -55,11 +55,26 @@ def get_bioassay_data(cid):
     
     if response.status_code == 200:
         data = response.json()
+        
+        # Check for AssaySummary
         if 'AssaySummary' in data:
-            return data['AssaySummary']
-        else:
-            st.warning(f"No 'AssaySummary' key found in the response for CID {cid}.")
-            return None
+            return {'type': 'AssaySummary', 'data': data['AssaySummary']}
+        
+        # Check for Table format
+        if 'Table' in data:
+            table = data['Table']
+            columns = table.get('Columns', {}).get('Column', [])
+            rows = table.get('Row', [])
+            parsed_rows = []
+            
+            for row in rows:
+                row_data = dict(zip(columns, row.get('Cell', [])))
+                parsed_rows.append(row_data)
+            
+            return {'type': 'Table', 'data': parsed_rows}
+        
+        st.warning(f"Unknown format in the response for CID {cid}.")
+        return None
     else:
         st.error(f"Error fetching bioassay data. Status code: {response.status_code}")
         return None
@@ -102,16 +117,25 @@ def main():
                 results = []
                 
                 if bioassay_data:
-                    st.write("### BioAssay Data for Exact CID:")
-                    for assay in bioassay_data.get('Assay', []):
-                        name = assay.get('Name', 'Unknown')
-                        target = assay.get('Target', {}).get('Description', 'Unknown target')
-                        outcome = assay.get('Outcome', 'Unknown outcome')
-                        st.write(f"- **Assay**: {name}")
-                        st.write(f"  - **Target**: {target}")
-                        st.write(f"  - **Outcome**: {outcome}")
-                        st.write("---")
-                        results.append({"CID": cid, "Assay": name, "Target": target, "Outcome": outcome})
+                    if bioassay_data['type'] == 'AssaySummary':
+                        st.write("### BioAssay Data for Exact CID (AssaySummary):")
+                        for assay in bioassay_data['data'].get('Assay', []):
+                            name = assay.get('Name', 'Unknown')
+                            target = assay.get('Target', {}).get('Description', 'Unknown target')
+                            outcome = assay.get('Outcome', 'Unknown outcome')
+                            st.write(f"- **Assay**: {name}")
+                            st.write(f"  - **Target**: {target}")
+                            st.write(f"  - **Outcome**: {outcome}")
+                            st.write("---")
+                            results.append({"CID": cid, "Assay": name, "Target": target, "Outcome": outcome})
+                    elif bioassay_data['type'] == 'Table':
+                        st.write("### BioAssay Data for Exact CID (Table):")
+                        for row in bioassay_data['data']:
+                            st.write(f"- **Assay Name**: {row.get('Assay Name', 'Unknown')}")
+                            st.write(f"  - **Outcome**: {row.get('Activity Outcome', 'Unknown')}")
+                            st.write(f"  - **Target GeneID**: {row.get('Target GeneID', 'Unknown')}")
+                            st.write("---")
+                            results.append(row)
                 else:
                     st.warning("No bioassay data found for the exact CID.")
                 
@@ -124,15 +148,23 @@ def main():
                     for similar_cid in similar_cids[:10]:  # Limit to top 10 similar compounds
                         bioassay_data = get_bioassay_data(similar_cid)
                         if bioassay_data:
-                            for assay in bioassay_data.get('Assay', []):
-                                name = assay.get('Name', 'Unknown')
-                                target = assay.get('Target', {}).get('Description', 'Unknown target')
-                                outcome = assay.get('Outcome', 'Unknown outcome')
-                                st.write(f"- **Assay**: {name}")
-                                st.write(f"  - **Target**: {target}")
-                                st.write(f"  - **Outcome**: {outcome}")
-                                st.write("---")
-                                results.append({"CID": similar_cid, "Assay": name, "Target": target, "Outcome": outcome})
+                            if bioassay_data['type'] == 'AssaySummary':
+                                for assay in bioassay_data['data'].get('Assay', []):
+                                    name = assay.get('Name', 'Unknown')
+                                    target = assay.get('Target', {}).get('Description', 'Unknown target')
+                                    outcome = assay.get('Outcome', 'Unknown outcome')
+                                    st.write(f"- **Assay**: {name}")
+                                    st.write(f"  - **Target**: {target}")
+                                    st.write(f"  - **Outcome**: {outcome}")
+                                    st.write("---")
+                                    results.append({"CID": similar_cid, "Assay": name, "Target": target, "Outcome": outcome})
+                            elif bioassay_data['type'] == 'Table':
+                                for row in bioassay_data['data']:
+                                    st.write(f"- **Assay Name**: {row.get('Assay Name', 'Unknown')}")
+                                    st.write(f"  - **Outcome**: {row.get('Activity Outcome', 'Unknown')}")
+                                    st.write(f"  - **Target GeneID**: {row.get('Target GeneID', 'Unknown')}")
+                                    st.write("---")
+                                    results.append(row)
                         else:
                             st.write(f"No bioassay data found for CID {similar_cid}.")
                 else:
