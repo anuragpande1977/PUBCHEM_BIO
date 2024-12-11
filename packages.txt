@@ -1,2 +1,2 @@
-zlib1g-dev      # Already added for zlib
-libjpeg-dev     # Required for JPEG support
+zlib1g-dev
+libjpeg-dev
