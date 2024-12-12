@@ -1,19 +1,16 @@
 import requests
 import pandas as pd
 import streamlit as st
-from io import BytesIO
+from pubchempy import get_compounds
 from rdkit import Chem
 import urllib.parse
 
-
+# Helper: Validate and Canonicalize SMILES
 def validate_and_canonicalize_smiles(smiles):
-    """
-    Validate and canonicalize the SMILES string using RDKit.
-    """
     try:
         mol = Chem.MolFromSmiles(smiles)
         if mol:
-            return Chem.MolToSmiles(mol, canonical=True)  # Returns canonical SMILES
+            return Chem.MolToSmiles(mol, canonical=True)
         else:
             st.error("Invalid SMILES string. Could not be parsed.")
             return None
@@ -21,117 +18,60 @@ def validate_and_canonicalize_smiles(smiles):
         st.error(f"Error during SMILES validation: {e}")
         return None
 
-# Helper: Validate SMILES
-def validate_smiles(smiles):
-    """
-    Basic validation for SMILES string. Ensure it's non-empty and well-formed.
-    """
-    return bool(smiles.strip())
-
-# Helper: Canonicalize SMILES
-def canonicalize_smiles(smiles):
-    """
-    Generate a canonical SMILES string using RDKit.
-    """
-    try:
-        mol = Chem.MolFromSmiles(smiles)
-        if mol:
-            return Chem.MolToSmiles(mol, canonical=True)
-        else:
-            st.error("Failed to canonicalize the SMILES string.")
-            return None
-    except Exception as e:
-        st.error(f"Error canonicalizing SMILES: {e}")
-        return None
-
-# Helper: Fetch ChEMBL Molecule Info (Exact Match)
-def fetch_chembl_exact(smiles):
-    """
-    Fetch molecule information from ChEMBL using the exact match endpoint.
-    """
+# Fetch ChEMBL Data
+def fetch_chembl_data(smiles):
     url = f"https://www.ebi.ac.uk/chembl/api/data/molecule?filter=molecule_structures__canonical_smiles__exact={urllib.parse.quote(smiles)}"
-    headers = {"Accept": "application/json"}  # Ensure JSON response
+    headers = {"Accept": "application/json"}
     response = requests.get(url, headers=headers)
-
     if response.status_code == 200:
         try:
-            data = response.json()  # Parse JSON response
-            molecules = [
-                {
-                    "ChEMBL ID": molecule["molecule_chembl_id"],
-                    "Name": molecule.get("pref_name", "N/A"),
-                    "Max Phase": molecule.get("max_phase", "N/A"),
-                }
-                for molecule in data.get("molecules", [])
-            ]
-            if molecules:
-                return molecules
-            else:
-                st.warning("No molecules found in the ChEMBL exact match response.")
-                return []
-        except ValueError as e:
-            st.error(f"JSON decode error: {e}")
-            st.write("Raw Response Content:", response.text)  # Debugging info
-            return []
-    else:
-        st.error(f"Request failed. HTTP Status: {response.status_code}")
-        st.write("Raw Response Content:", response.text)
-        return []
-
-
-# Helper: Fetch ChEMBL Molecule Info (Substructure Search)
-def fetch_chembl_substructure(smiles):
-    """
-    Fetch molecule information from ChEMBL using substructure search.
-    """
-    url = "https://www.ebi.ac.uk/chembl/api/data/substructure"
-    headers = {"Content-Type": "application/json"}
-    payload = {"smiles": smiles}  # Correct payload structure
-    try:
-        response = requests.post(url, headers=headers, json=payload)
-        if response.status_code == 200:
             data = response.json()
             molecules = [
                 {
-                    "ChEMBL ID": molecule["molecule_chembl_id"],
+                    "ChEMBL ID": molecule.get("molecule_chembl_id", "N/A"),
                     "Name": molecule.get("pref_name", "N/A"),
                     "Max Phase": molecule.get("max_phase", "N/A"),
                 }
                 for molecule in data.get("molecules", [])
             ]
-            if molecules:
-                return molecules
-            else:
-                st.warning("No molecules found in the ChEMBL substructure response.")
-                return []
-        elif response.status_code == 400:
-            st.error("Bad Request: Substructure search payload might be invalid.")
-        else:
-            st.error(f"Substructure search failed. HTTP Status: {response.status_code}")
-            st.write("Response Content:", response.text)
-    except Exception as e:
-        st.error(f"Error during substructure search: {e}")
-    return []
-
-# Helper: Fetch BindingDB Targets
-def fetch_bindingdb_targets(smiles):
-    """
-    Fetch target binding data from BindingDB using SMILES.
-    """
-    url = f"https://www.bindingdb.org/rwd/bind/chemsearch/marvin/SDFDownload.jsp?download_file=yes&smiles={urllib.parse.quote(smiles)}"
-    response = requests.get(url)
-    if response.status_code == 200 and response.text.strip():
-        data = response.text.splitlines()
-        return [{"Target Data": line} for line in data[:10]]  # Show first 10 entries
+            return molecules
+        except ValueError as e:
+            st.error(f"JSON decode error: {e}")
+            st.write("Raw Response Content:", response.text)
+            return []
     else:
-        st.warning("No binding data found in BindingDB for this compound.")
+        st.error(f"ChEMBL request failed. HTTP Status: {response.status_code}")
         return []
 
-# Helper: Save results to Excel
+# Fetch PubChem Data
+def fetch_pubchem_data(smiles):
+    compounds = get_compounds(smiles, 'smiles')
+    data = []
+    for compound in compounds:
+        data.append({
+            "CID": compound.cid,
+            "Molecular Weight": compound.molecular_weight,
+            "Canonical SMILES": compound.canonical_smiles,
+            "IUPAC Name": compound.iupac_name,
+        })
+    return data
+
+# Fetch UniProt Data
+def fetch_uniprot_data(protein_name):
+    url = f"https://rest.uniprot.org/uniprotkb/search?query={protein_name}&format=json"
+    response = requests.get(url)
+    if response.status_code == 200:
+        try:
+            return response.json().get("results", [])
+        except ValueError as e:
+            st.error(f"Error decoding UniProt JSON: {e}")
+            return []
+    else:
+        st.error(f"UniProt request failed. HTTP Status: {response.status_code}")
+        return []
+
+# Save Results to Excel
 def save_to_excel(data, filename="results.xlsx"):
-    """
-    Save data to an Excel file.
-    """
     output = BytesIO()
     try:
         df = pd.DataFrame(data)
@@ -144,8 +84,8 @@ def save_to_excel(data, filename="results.xlsx"):
 
 # Main Streamlit App
 def main():
-    st.title("Comprehensive Compound Analysis with ChEMBL and BindingDB Integration")
-    st.write("Analyze compounds using PubChem, ChEMBL, and BindingDB.")
+    st.title("Comprehensive Compound Analysis Tool")
+    st.write("Analyze compounds using ChEMBL, PubChem, and UniProt APIs.")
 
     # Input: SMILES string
     smiles = st.text_input("Enter the SMILES string of your compound:")
@@ -153,61 +93,45 @@ def main():
     if st.button("Analyze Compound"):
         if smiles:
             # Validate SMILES
-            if not validate_smiles(smiles):
-                st.error("Invalid SMILES string. Please provide a valid structure.")
-                return
-
-            # Canonicalize SMILES
-            canonical_smiles = canonicalize_smiles(smiles)
+            canonical_smiles = validate_and_canonicalize_smiles(smiles)
             if not canonical_smiles:
-                st.error("Failed to canonicalize SMILES. Analysis cannot proceed.")
+                st.error("Invalid SMILES. Analysis cannot proceed.")
                 return
 
-            # Fetch ChEMBL molecule information
-            with st.spinner("Fetching molecule information from ChEMBL..."):
-                chembl_data = fetch_chembl_exact(canonical_smiles)
-                if chembl_data is None:  # Exact match failed, try substructure
-                    chembl_data = fetch_chembl_substructure(canonical_smiles)
-                if chembl_data:
-                    st.subheader("ChEMBL Molecule Information")
-                    st.dataframe(chembl_data)
+            results = {}
 
-                    # Save to Excel
-                    excel_file = save_to_excel(chembl_data, "chembl_data.xlsx")
-                    if excel_file:
-                        st.download_button(
-                            label="Download ChEMBL Data as Excel",
-                            data=excel_file,
-                            file_name="chembl_data.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        )
-                else:
-                    st.warning("No data found in ChEMBL.")
+            # Fetch ChEMBL data
+            st.spinner("Fetching ChEMBL data...")
+            chembl_data = fetch_chembl_data(canonical_smiles)
+            results['ChEMBL'] = chembl_data if chembl_data else "No data found."
+            st.subheader("ChEMBL Data")
+            st.dataframe(pd.DataFrame(chembl_data))
 
-            # Fetch BindingDB target data
-            with st.spinner("Fetching binding data from BindingDB..."):
-                bindingdb_targets = fetch_bindingdb_targets(canonical_smiles)
-                if bindingdb_targets:
-                    st.subheader("Binding Targets (BindingDB)")
-                    st.dataframe(bindingdb_targets)
+            # Fetch PubChem data
+            st.spinner("Fetching PubChem data...")
+            pubchem_data = fetch_pubchem_data(canonical_smiles)
+            results['PubChem'] = pubchem_data if pubchem_data else "No data found."
+            st.subheader("PubChem Data")
+            st.dataframe(pd.DataFrame(pubchem_data))
 
-                    # Save to Excel
-                    excel_file = save_to_excel(bindingdb_targets, "bindingdb_targets.xlsx")
-                    if excel_file:
-                        st.download_button(
-                            label="Download BindingDB Targets as Excel",
-                            data=excel_file,
-                            file_name="bindingdb_targets.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        )
-                else:
-                    st.warning("No binding data found in BindingDB.")
+            # Fetch UniProt data (example target: P53)
+            st.spinner("Fetching UniProt data for P53...")
+            uniprot_data = fetch_uniprot_data("P53")
+            results['UniProt'] = uniprot_data if uniprot_data else "No data found."
+            st.subheader("UniProt Data")
+            st.dataframe(pd.DataFrame(uniprot_data))
 
-        else:
-            st.error("Please enter a valid SMILES string.")
+            # Save results to Excel
+            excel_file = save_to_excel(results)
+            if excel_file:
+                st.download_button(
+                    label="Download Results as Excel",
+                    data=excel_file,
+                    file_name="compound_analysis_results.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
 
 if __name__ == "__main__":
     main()
-
 
 
