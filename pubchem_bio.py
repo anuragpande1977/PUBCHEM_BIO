@@ -50,31 +50,34 @@ def fetch_chembl_exact(smiles):
     Fetch molecule information from ChEMBL using the exact match endpoint.
     """
     url = f"https://www.ebi.ac.uk/chembl/api/data/molecule?filter=molecule_structures__canonical_smiles__exact={urllib.parse.quote(smiles)}"
-    response = requests.get(url)
+    headers = {"Accept": "application/json"}  # Ensure JSON response
+    response = requests.get(url, headers=headers)
+
     if response.status_code == 200:
         try:
-            data = response.json()
-            if "molecules" in data:
-                molecules = [
-                    {
-                        "ChEMBL ID": molecule["molecule_chembl_id"],
-                        "Name": molecule.get("pref_name", "N/A"),
-                        "Max Phase": molecule.get("max_phase", "N/A"),
-                    }
-                    for molecule in data["molecules"]
-                ]
+            data = response.json()  # Parse JSON response
+            molecules = [
+                {
+                    "ChEMBL ID": molecule["molecule_chembl_id"],
+                    "Name": molecule.get("pref_name", "N/A"),
+                    "Max Phase": molecule.get("max_phase", "N/A"),
+                }
+                for molecule in data.get("molecules", [])
+            ]
+            if molecules:
                 return molecules
             else:
                 st.warning("No molecules found in the ChEMBL exact match response.")
                 return []
         except ValueError as e:
             st.error(f"JSON decode error: {e}")
-            st.write("Raw Response Content:", response.text)
+            st.write("Raw Response Content:", response.text)  # Debugging info
             return []
     else:
-        st.error(f"Exact match failed. HTTP Status: {response.status_code}")
-        st.write("Response Content:", response.text)
+        st.error(f"Request failed. HTTP Status: {response.status_code}")
+        st.write("Raw Response Content:", response.text)
         return []
+
 
 # Helper: Fetch ChEMBL Molecule Info (Substructure Search)
 def fetch_chembl_substructure(smiles):
