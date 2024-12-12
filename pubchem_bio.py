@@ -4,6 +4,7 @@ import streamlit as st
 from pubchempy import get_compounds
 from rdkit import Chem
 import urllib.parse
+from io import BytesIO
 
 # Helper: Validate and Canonicalize SMILES
 def validate_and_canonicalize_smiles(smiles):
@@ -62,7 +63,14 @@ def fetch_uniprot_data(protein_name):
     response = requests.get(url)
     if response.status_code == 200:
         try:
-            return response.json().get("results", [])
+            return [
+                {
+                    "Protein Name": entry.get("proteinDescription", {}).get("recommendedName", {}).get("fullName", {}).get("value", "N/A"),
+                    "Gene Name": entry.get("genes", [{}])[0].get("geneName", {}).get("value", "N/A"),
+                    "Organism": entry.get("organism", {}).get("scientificName", "N/A")
+                }
+                for entry in response.json().get("results", [])
+            ]
         except ValueError as e:
             st.error(f"Error decoding UniProt JSON: {e}")
             return []
@@ -74,8 +82,11 @@ def fetch_uniprot_data(protein_name):
 def save_to_excel(data, filename="results.xlsx"):
     output = BytesIO()
     try:
-        df = pd.DataFrame(data)
-        df.to_excel(output, index=False, engine='openpyxl')
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            for key, value in data.items():
+                if isinstance(value, list):
+                    df = pd.DataFrame(value)
+                    df.to_excel(writer, sheet_name=key, index=False)
         output.seek(0)
         return output
     except Exception as e:
@@ -101,25 +112,28 @@ def main():
             results = {}
 
             # Fetch ChEMBL data
-            st.spinner("Fetching ChEMBL data...")
-            chembl_data = fetch_chembl_data(canonical_smiles)
-            results['ChEMBL'] = chembl_data if chembl_data else "No data found."
-            st.subheader("ChEMBL Data")
-            st.dataframe(pd.DataFrame(chembl_data))
+            with st.spinner("Fetching ChEMBL data..."):
+                chembl_data = fetch_chembl_data(canonical_smiles)
+                results['ChEMBL'] = chembl_data if chembl_data else "No data found."
+                st.subheader("ChEMBL Data")
+                if chembl_data:
+                    st.dataframe(pd.DataFrame(chembl_data))
 
             # Fetch PubChem data
-            st.spinner("Fetching PubChem data...")
-            pubchem_data = fetch_pubchem_data(canonical_smiles)
-            results['PubChem'] = pubchem_data if pubchem_data else "No data found."
-            st.subheader("PubChem Data")
-            st.dataframe(pd.DataFrame(pubchem_data))
+            with st.spinner("Fetching PubChem data..."):
+                pubchem_data = fetch_pubchem_data(canonical_smiles)
+                results['PubChem'] = pubchem_data if pubchem_data else "No data found."
+                st.subheader("PubChem Data")
+                if pubchem_data:
+                    st.dataframe(pd.DataFrame(pubchem_data))
 
             # Fetch UniProt data (example target: P53)
-            st.spinner("Fetching UniProt data for P53...")
-            uniprot_data = fetch_uniprot_data("P53")
-            results['UniProt'] = uniprot_data if uniprot_data else "No data found."
-            st.subheader("UniProt Data")
-            st.dataframe(pd.DataFrame(uniprot_data))
+            with st.spinner("Fetching UniProt data for P53..."):
+                uniprot_data = fetch_uniprot_data("P53")
+                results['UniProt'] = uniprot_data if uniprot_data else "No data found."
+                st.subheader("UniProt Data")
+                if uniprot_data:
+                    st.dataframe(pd.DataFrame(uniprot_data))
 
             # Save results to Excel
             excel_file = save_to_excel(results)
