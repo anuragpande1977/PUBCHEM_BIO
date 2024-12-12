@@ -33,27 +33,33 @@ def get_cid_from_smiles(smiles):
 # Helper: Fetch ChEMBL Molecule Info
 def fetch_chembl_molecule_info(smiles):
     """
-    Fetch molecule information from ChEMBL using SMILES.
+    Fetch molecule information from ChEMBL using the exact match endpoint.
     """
-    url = f"https://www.ebi.ac.uk/chembl/api/data/molecule?smiles={urllib.parse.quote(smiles)}"
+    url = f"https://www.ebi.ac.uk/chembl/api/data/molecule/search/{urllib.parse.quote(smiles)}"
     response = requests.get(url)
     if response.status_code == 200:
         try:
             data = response.json()
-            molecules = [
-                {
-                    "ChEMBL ID": molecule["molecule_chembl_id"],
-                    "Name": molecule.get("pref_name", "N/A"),
-                    "Max Phase": molecule.get("max_phase", "N/A"),
-                }
-                for molecule in data.get("molecules", [])
-            ]
-            return molecules
-        except KeyError:
-            st.warning("No molecule information found in ChEMBL.")
+            if "molecules" in data:
+                molecules = [
+                    {
+                        "ChEMBL ID": molecule["molecule_chembl_id"],
+                        "Name": molecule.get("pref_name", "N/A"),
+                        "Max Phase": molecule.get("max_phase", "N/A"),
+                    }
+                    for molecule in data["molecules"]
+                ]
+                return molecules
+            else:
+                st.warning("No molecules found in the ChEMBL response.")
+                return []
+        except ValueError as e:
+            st.error(f"JSON decode error: {e}")
+            st.write("Raw Response Content:", response.text)  # Debugging info
             return []
     else:
-        st.error(f"Error fetching molecule information from ChEMBL. Status code: {response.status_code}")
+        st.error(f"Failed to fetch data from ChEMBL. HTTP Status: {response.status_code}")
+        st.write("Response Content:", response.text)  # Debugging info
         return []
 
 # Helper: Fetch BindingDB Targets
@@ -150,5 +156,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
