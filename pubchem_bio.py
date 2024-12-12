@@ -47,7 +47,7 @@ def fetch_chembl_exact(smiles):
     """
     Fetch molecule information from ChEMBL using the exact match endpoint.
     """
-    url = f"https://www.ebi.ac.uk/chembl/api/data/molecule/search/{urllib.parse.quote(smiles)}"
+    url = f"https://www.ebi.ac.uk/chembl/api/data/molecule?filter=molecule_structures__canonical_smiles__exact={urllib.parse.quote(smiles)}"
     response = requests.get(url)
     if response.status_code == 200:
         try:
@@ -67,11 +67,12 @@ def fetch_chembl_exact(smiles):
                 return []
         except ValueError as e:
             st.error(f"JSON decode error: {e}")
-            st.write("Raw Response Content:", response.text)  # Debugging info
+            st.write("Raw Response Content:", response.text)
             return []
     else:
-        st.warning("Exact match failed. Trying substructure search...")
-        return None  # Trigger substructure search
+        st.error(f"Exact match failed. HTTP Status: {response.status_code}")
+        st.write("Response Content:", response.text)
+        return []
 
 # Helper: Fetch ChEMBL Molecule Info (Substructure Search)
 def fetch_chembl_substructure(smiles):
@@ -102,10 +103,10 @@ def fetch_chembl_substructure(smiles):
             st.error("Bad Request: Substructure search payload might be invalid.")
         else:
             st.error(f"Substructure search failed. HTTP Status: {response.status_code}")
+            st.write("Response Content:", response.text)
     except Exception as e:
         st.error(f"Error during substructure search: {e}")
     return []
-
 
 # Helper: Fetch BindingDB Targets
 def fetch_bindingdb_targets(smiles):
