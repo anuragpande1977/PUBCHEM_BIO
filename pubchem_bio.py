@@ -66,10 +66,10 @@ def fetch_chembl_substructure(smiles):
     """
     url = "https://www.ebi.ac.uk/chembl/api/data/substructure"
     headers = {"Content-Type": "application/json"}
-    payload = {"smiles": smiles}
-    response = requests.post(url, headers=headers, json=payload)
-    if response.status_code == 200:
-        try:
+    payload = {"smiles": smiles}  # Correct payload structure
+    try:
+        response = requests.post(url, headers=headers, json=payload)
+        if response.status_code == 200:
             data = response.json()
             molecules = [
                 {
@@ -84,13 +84,14 @@ def fetch_chembl_substructure(smiles):
             else:
                 st.warning("No molecules found in the ChEMBL substructure response.")
                 return []
-        except ValueError as e:
-            st.error(f"JSON decode error: {e}")
-            st.write("Raw Response Content:", response.text)
-            return []
-    else:
-        st.error(f"Substructure search failed. HTTP Status: {response.status_code}")
-        return []
+        elif response.status_code == 400:
+            st.error("Bad Request: Substructure search payload might be invalid.")
+        else:
+            st.error(f"Substructure search failed. HTTP Status: {response.status_code}")
+    except Exception as e:
+        st.error(f"Error during substructure search: {e}")
+    return []
+
 
 # Helper: Fetch BindingDB Targets
 def fetch_bindingdb_targets(smiles):
