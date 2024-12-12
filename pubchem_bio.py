@@ -4,6 +4,19 @@ import streamlit as st
 from io import BytesIO
 from rdkit import Chem
 import urllib.parse
+response = requests.get(url)
+if response.status_code == 200:
+    try:
+        data = response.json()
+    except ValueError as e:
+        st.error(f"JSON decode error: {e}")
+        st.write("Raw Response Content:", response.text)  # Debugging info
+        return []
+else:
+    st.error(f"Request failed. HTTP Status: {response.status_code}")
+    st.write("Raw Response Content:", response.text)
+    return []
+
 def validate_and_canonicalize_smiles(smiles):
     """
     Validate and canonicalize the SMILES string using RDKit.
