@@ -3,6 +3,21 @@ import pandas as pd
 import streamlit as st
 from io import BytesIO
 import urllib.parse
+from rdkit import Chem
+from rdkit.Chem import rdDepictor
+
+def canonicalize_smiles(smiles):
+    """
+    Generate a canonical SMILES string using RDKit.
+    """
+    try:
+        mol = Chem.MolFromSmiles(smiles)
+        if mol:
+            return Chem.MolToSmiles(mol, canonical=True)
+        else:
+            return None
+    except Exception as e:
+        return None
 
 # Helper: Validate SMILES
 def validate_smiles(smiles):
