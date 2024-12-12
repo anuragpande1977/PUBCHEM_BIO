@@ -4,8 +4,15 @@ import streamlit as st
 from io import BytesIO
 import urllib.parse
 from rdkit import Chem
-from rdkit.Chem import rdDepictor
 
+# Helper: Validate SMILES
+def validate_smiles(smiles):
+    """
+    Basic validation for SMILES string. Ensure it's non-empty and well-formed.
+    """
+    return bool(smiles.strip())
+
+# Helper: Canonicalize SMILES
 def canonicalize_smiles(smiles):
     """
     Generate a canonical SMILES string using RDKit.
@@ -15,16 +22,11 @@ def canonicalize_smiles(smiles):
         if mol:
             return Chem.MolToSmiles(mol, canonical=True)
         else:
+            st.error("Failed to canonicalize the SMILES string.")
             return None
     except Exception as e:
+        st.error(f"Error canonicalizing SMILES: {e}")
         return None
-
-# Helper: Validate SMILES
-def validate_smiles(smiles):
-    """
-    Basic validation for SMILES string. Ensure it's non-empty and well-formed.
-    """
-    return bool(smiles.strip())
 
 # Helper: Convert SMILES to PubChem CID
 def get_cid_from_smiles(smiles):
@@ -72,9 +74,11 @@ def fetch_chembl_molecule_info(smiles):
             st.error(f"JSON decode error: {e}")
             st.write("Raw Response Content:", response.text)  # Debugging info
             return []
+    elif response.status_code == 404:
+        st.warning("Compound not found in ChEMBL.")
+        return []
     else:
         st.error(f"Failed to fetch data from ChEMBL. HTTP Status: {response.status_code}")
-        st.write("Response Content:", response.text)  # Debugging info
         return []
 
 # Helper: Fetch BindingDB Targets
@@ -121,16 +125,22 @@ def main():
                 st.error("Invalid SMILES string. Please provide a valid structure.")
                 return
 
+            # Canonicalize SMILES
+            canonical_smiles = canonicalize_smiles(smiles)
+            if not canonical_smiles:
+                st.error("Failed to canonicalize SMILES. Analysis cannot proceed.")
+                return
+
             # Fetch CID from PubChem
             with st.spinner("Fetching PubChem CID..."):
-                cid = get_cid_from_smiles(smiles)
+                cid = get_cid_from_smiles(canonical_smiles)
 
             if cid:
                 st.success(f"CID retrieved: {cid}")
 
             # Fetch ChEMBL molecule information
             with st.spinner("Fetching molecule information from ChEMBL..."):
-                chembl_data = fetch_chembl_molecule_info(smiles)
+                chembl_data = fetch_chembl_molecule_info(canonical_smiles)
                 if chembl_data:
                     st.subheader("ChEMBL Molecule Information")
                     st.dataframe(chembl_data)
@@ -149,7 +159,7 @@ def main():
 
             # Fetch BindingDB target data
             with st.spinner("Fetching binding data from BindingDB..."):
-                bindingdb_targets = fetch_bindingdb_targets(smiles)
+                bindingdb_targets = fetch_bindingdb_targets(canonical_smiles)
                 if bindingdb_targets:
                     st.subheader("Binding Targets (BindingDB)")
                     st.dataframe(bindingdb_targets)
@@ -171,6 +181,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
