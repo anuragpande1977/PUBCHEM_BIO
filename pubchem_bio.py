@@ -4,6 +4,20 @@ import streamlit as st
 from io import BytesIO
 from rdkit import Chem
 import urllib.parse
+def validate_and_canonicalize_smiles(smiles):
+    """
+    Validate and canonicalize the SMILES string using RDKit.
+    """
+    try:
+        mol = Chem.MolFromSmiles(smiles)
+        if mol:
+            return Chem.MolToSmiles(mol, canonical=True)  # Returns canonical SMILES
+        else:
+            st.error("Invalid SMILES string. Could not be parsed.")
+            return None
+    except Exception as e:
+        st.error(f"Error during SMILES validation: {e}")
+        return None
 
 # Helper: Validate SMILES
 def validate_smiles(smiles):
