@@ -2,8 +2,8 @@ import requests
 import pandas as pd
 import streamlit as st
 from io import BytesIO
-import urllib.parse
 from rdkit import Chem
+import urllib.parse
 
 # Helper: Validate SMILES
 def validate_smiles(smiles):
@@ -28,27 +28,8 @@ def canonicalize_smiles(smiles):
         st.error(f"Error canonicalizing SMILES: {e}")
         return None
 
-# Helper: Convert SMILES to PubChem CID
-def get_cid_from_smiles(smiles):
-    """
-    Convert a SMILES string to a PubChem CID.
-    """
-    url = "https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/smiles/cids/JSON"
-    params = {'smiles': smiles}
-    response = requests.get(url, params=params)
-    if response.status_code == 200:
-        data = response.json()
-        if 'IdentifierList' in data and 'CID' in data['IdentifierList']:
-            return data['IdentifierList']['CID'][0]
-        else:
-            st.warning("No CID found for the given SMILES string.")
-            return None
-    else:
-        st.error(f"Error fetching CID from PubChem. Status code: {response.status_code}")
-        return None
-
-# Helper: Fetch ChEMBL Molecule Info
-def fetch_chembl_molecule_info(smiles):
+# Helper: Fetch ChEMBL Molecule Info (Exact Match)
+def fetch_chembl_exact(smiles):
     """
     Fetch molecule information from ChEMBL using the exact match endpoint.
     """
@@ -68,17 +49,47 @@ def fetch_chembl_molecule_info(smiles):
                 ]
                 return molecules
             else:
-                st.warning("No molecules found in the ChEMBL response.")
+                st.warning("No molecules found in the ChEMBL exact match response.")
                 return []
         except ValueError as e:
             st.error(f"JSON decode error: {e}")
             st.write("Raw Response Content:", response.text)  # Debugging info
             return []
-    elif response.status_code == 404:
-        st.warning("Compound not found in ChEMBL.")
-        return []
     else:
-        st.error(f"Failed to fetch data from ChEMBL. HTTP Status: {response.status_code}")
+        st.warning("Exact match failed. Trying substructure search...")
+        return None  # Trigger substructure search
+
+# Helper: Fetch ChEMBL Molecule Info (Substructure Search)
+def fetch_chembl_substructure(smiles):
+    """
+    Fetch molecule information from ChEMBL using substructure search.
+    """
+    url = "https://www.ebi.ac.uk/chembl/api/data/substructure"
+    headers = {"Content-Type": "application/json"}
+    payload = {"smiles": smiles}
+    response = requests.post(url, headers=headers, json=payload)
+    if response.status_code == 200:
+        try:
+            data = response.json()
+            molecules = [
+                {
+                    "ChEMBL ID": molecule["molecule_chembl_id"],
+                    "Name": molecule.get("pref_name", "N/A"),
+                    "Max Phase": molecule.get("max_phase", "N/A"),
+                }
+                for molecule in data.get("molecules", [])
+            ]
+            if molecules:
+                return molecules
+            else:
+                st.warning("No molecules found in the ChEMBL substructure response.")
+                return []
+        except ValueError as e:
+            st.error(f"JSON decode error: {e}")
+            st.write("Raw Response Content:", response.text)
+            return []
+    else:
+        st.error(f"Substructure search failed. HTTP Status: {response.status_code}")
         return []
 
 # Helper: Fetch BindingDB Targets
@@ -131,16 +142,11 @@ def main():
                 st.error("Failed to canonicalize SMILES. Analysis cannot proceed.")
                 return
 
-            # Fetch CID from PubChem
-            with st.spinner("Fetching PubChem CID..."):
-                cid = get_cid_from_smiles(canonical_smiles)
-
-            if cid:
-                st.success(f"CID retrieved: {cid}")
-
             # Fetch ChEMBL molecule information
             with st.spinner("Fetching molecule information from ChEMBL..."):
-                chembl_data = fetch_chembl_molecule_info(canonical_smiles)
+                chembl_data = fetch_chembl_exact(canonical_smiles)
+                if chembl_data is None:  # Exact match failed, try substructure
+                    chembl_data = fetch_chembl_substructure(canonical_smiles)
                 if chembl_data:
                     st.subheader("ChEMBL Molecule Information")
                     st.dataframe(chembl_data)
@@ -181,7 +187,6 @@ def main():
 
 if __name__ == "__main__":
     main()
-
 
 
 
